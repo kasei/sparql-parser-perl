@@ -1,0 +1,184 @@
+package SPARQL::Constants;
+
+use strict;
+use warnings;
+use 5.010;
+
+our @EXPORT;
+BEGIN {
+	@EXPORT = qw(
+		WS
+		COMMENT
+		NIL
+		ANON
+		DOUBLE
+		DECIMAL
+		INTEGER
+		HATHAT
+		LANG
+		LPAREN
+		RPAREN
+		LBRACE
+		RBRACE
+		LBRACKET
+		RBRACKET
+		EQUALS
+		NOTEQUALS
+		BANG
+		IRIREF
+		LE
+		GE
+		LT
+		GT
+		ANDAND
+		OROR
+		SEMICOLON
+		DOT
+		COMMA
+		PLUS
+		MINUS
+		STAR
+		SLASH
+		VAR
+		STRING3D
+		STRING3S
+		STRING1D
+		STRING1S
+		BNODE
+		HAT
+		QUESTION
+		OR
+		PREFIXNAME
+		BOOLEAN
+		KEYWORD
+		ABS
+		ADD
+		ALL
+		AS
+		ASC
+		ASK
+		AVG
+		BASE
+		BIND
+		BNODE
+		BOUND
+		BY
+		CEIL
+		CLEAR
+		COALESCE
+		CONCAT
+		CONSTRUCT
+		CONTAINS
+		COPY
+		COUNT
+		CREATE
+		DATATYPE
+		DAY
+		DEFAULT
+		DELETE
+		DELETE DATA
+		DELETE WHERE
+		DESC
+		DESCRIBE
+		DISTINCT
+		DROP
+		ENCODE_FOR_URI
+		EXISTS
+		FILTER
+		FLOOR
+		FROM
+		GRAPH
+		GROUP
+		GROUP_CONCAT
+		HAVING
+		HOURS
+		IF
+		IN
+		INSERT
+		INSERT DATA
+		INTO
+		IRI
+		ISBLANK
+		ISIRI
+		ISLITERAL
+		ISNUMERIC
+		ISURI
+		LANG
+		LANGMATCHES
+		LCASE
+		LIMIT
+		LOAD
+		MAX
+		MD5
+		MIN
+		MINUS
+		MINUTES
+		MONTH
+		MOVE
+		NAMED
+		NOT
+		NOW
+		OFFSET
+		OPTIONAL
+		ORDER
+		PREFIX
+		RAND
+		REDUCED
+		REGEX
+		REPLACE
+		ROUND
+		SAMETERM
+		SAMPLE
+		SECONDS
+		SELECT
+		SEPARATOR
+		SERVICE
+		SHA1
+		SHA256
+		SHA384
+		SHA512
+		SILENT
+		STR
+		STRAFTER
+		STRBEFORE
+		STRDT
+		STRENDS
+		STRLANG
+		STRLEN
+		STRSTARTS
+		STRUUID
+		SUBSTR
+		SUM
+		TIMEZONE
+		TO
+		TZ
+		UCASE
+		UNDEF
+		UNION
+		URI
+		USING
+		UUID
+		VALUES
+		WHERE
+		YEAR
+		decrypt_constant
+	)
+};
+use base 'Exporter';
+
+{
+	my %mapping;
+	my %reverse;
+	BEGIN {
+		my $cx	= 0;
+		foreach my $name (grep { $_ ne 'decrypt_constant' } @EXPORT) {
+			my $value	= ++$cx;
+			$reverse{ $value }	= $name;
+			$mapping{ $name }	= $value;
+		}
+	}
+	use constant +{ %mapping };
+	sub decrypt_constant { my $num	= +shift; $reverse{$num} }
+};
+
+1;
