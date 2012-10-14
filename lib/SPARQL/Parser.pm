@@ -112,10 +112,21 @@ sub _get_token_type {
 	my $self	= shift;
 	my $l		= shift;
 	my $type	= shift;
+	my $value	= shift;
 	my $t		= $self->_next_token($l);
 	return unless ($t);
 	unless ($t->type eq $type) {
-		$self->throw_error($t, $l, sprintf("Expecting %s but got %s", decrypt_constant($type), decrypt_constant($t->type)));
+		if (defined($value)) {
+			$self->throw_error($t, $l, sprintf("Expecting %s (%s) but got %s", decrypt_constant($type), $value, decrypt_constant($t->type)));
+		} else {
+			$self->throw_error($t, $l, sprintf("Expecting %s but got %s", decrypt_constant($type), decrypt_constant($t->type)));
+		}
+	}
+	
+	if (defined($value)) {
+		unless ($t->value eq $value) {
+			$self->throw_error($t, $l, sprintf("Expecting %s '%s' but got '%s'", decrypt_constant($type), $value, $t->value));
+		}
 	}
 	return $t;
 }
@@ -179,17 +190,18 @@ sub _SelectQuery {
 	my $l		= shift;
 	my %args	= @_;
 	
-	my $select	= $self->_SelectClause($l);
+	my $select	= $self->_SelectClause($l, %args);
 	# XXX DatasetClause
 	my $algebra	= $self->_WhereClause($l, %args);
 	my %mods	= $self->_SolutionModifier($l, %args);
 
-	if (scalar(@{ $select->{extend} || [] })) {
-		...
-# 		$algebra	= SPARQL::AST->new( type => 'Extend', children => [$algebra], value => [@vars] );
+	if (my $e = $select->{extend}) {
+		$algebra	= SPARQL::AST->new( type => 'Extend', children => [$algebra], value => $e );
 	}
 	
-	if (scalar(@{ $select->{project} })) {
+	if ($select->{project} eq '*') {
+		warn 'SELECT * unhandled...';
+	} elsif (scalar(@{ $select->{project} })) {
 		my @vars	= @{ $select->{project} };
 		$algebra	= SPARQL::AST->new( type => 'Project', children => [$algebra], value => [@vars] );
 	}
@@ -216,29 +228,57 @@ sub _SelectQuery {
 sub _SelectClause {
 	my $self	= shift;
 	my $l		= shift;
-	my $t		= $self->_next_token($l);
+	my %args	= @_;
+	my $t		= $self->_peek_token($l);
 	
 	my %options;
-	my @project;
 	if ($t->type == KEYWORD) {
 		if ($t->value eq 'DISTINCT') {
-			$t		= $self->_next_token($l);
+			$self->_next_token($l);
+			$self->_get_token_type($l, KEYWORD, 'DISTINCT');
 			$options{distinct}++;
 		} elsif ($t->value eq 'REDUCED') {
-			$t		= $self->_next_token($l);
+			$self->_next_token($l);
+			$self->_get_token_type($l, KEYWORD, 'REDUCED');
 			$options{reduced}++;
 		}
 	}
 	
-	while ($t->type == VAR) {
-		push(@project, $t->value);
-		$t		= $self->_next_token($l);
+	$t		= $self->_peek_token($l);
+	
+	my $project;
+	my %select	= (
+		options	=> \%options,
+	);
+	
+	if ($t->type == STAR) {
+		$self->_get_token_type($l, STAR);
+		$project	= '*';
+	} else {
+		my @project;
+		my %extend;
+		while (1) {
+			if ($t->type == VAR) {
+				$t	= $self->_get_token_type($l, VAR);
+				push(@project, $t->value);
+			} elsif ($t->type == LPAREN) {
+				$t	= $self->_get_token_type($l, LPAREN);
+				my $expr	= $self->_Expression($l, %args);
+				$t	= $self->_get_token_type($l, KEYWORD, 'AS');
+				my $var	= $self->_get_token_type($l, VAR);
+				$t	= $self->_get_token_type($l, RPAREN);
+				$extend{ $var->value }	= $expr;
+				push(@project, $var->value);
+			} else {
+				last;
+			}
+			$t		= $self->_peek_token($l);
+		}
+		$select{ extend }	= \%extend;
+		$select{ project }	= \@project;
 	}
 	
-	$self->_unget_token($t);
-	
-	
-	return { options => \%options, project => \@project };
+	return \%select;
 }
 
 # [10]  	ConstructQuery	  ::=  	'CONSTRUCT' ( ConstructTemplate DatasetClause* WhereClause SolutionModifier | DatasetClause* 'WHERE' '{' TriplesTemplate? '}' SolutionModifier )
@@ -507,10 +547,7 @@ sub _OptionalGraphPattern {
 	my $self	= shift;
 	my $l		= shift;
 	my %args	= @_;
-	my $t		= $self->_get_token_type($l, KEYWORD);
-	unless ($t->value eq 'OPTIONAL') {
-		$self->throw_error($t, $l, sprintf("Expecting OPTIONAL but got %s", $t->value));
-	}
+	my $t		= $self->_get_token_type($l, KEYWORD, 'OPTIONAL');
 	
 	my $ggp	= $self->_GroupGraphPattern($l, %args);
 	return SPARQL::AST->new( type => 'Minus', children => [$ggp] );
@@ -521,10 +558,7 @@ sub _GraphGraphPattern {
 	my $self	= shift;
 	my $l		= shift;
 	my %args	= @_;
-	my $t		= $self->_get_token_type($l, KEYWORD);
-	unless ($t->value eq 'GRAPH') {
-		$self->throw_error($t, $l, sprintf("Expecting GRAPH but got %s", $t->value));
-	}
+	my $t		= $self->_get_token_type($l, KEYWORD, 'GRAPH');
 	
 	my $name	= $self->_VarOrIri($l, %args);
 	my $ggp	= $self->_GroupGraphPattern($l, %args);
@@ -536,15 +570,12 @@ sub _ServiceGraphPattern {
 	my $self	= shift;
 	my $l		= shift;
 	my %args	= @_;
-	my $t		= $self->_get_token_type($l, KEYWORD);
-	unless ($t->value eq 'SERVICE') {
-		$self->throw_error($t, $l, sprintf("Expecting GRAPH but got %s", $t->value));
-	}
+	my $t		= $self->_get_token_type($l, KEYWORD, 'SERVICE');
 	
 	$t			= $self->_peek_token($l);
 	my @silent;
 	if ($t->type == KEYWORD and $t->value eq 'SILENT') {
-		$self->_get_token_type($l, KEYWORD);
+		$self->_get_token_type($l, KEYWORD, 'SILENT');
 		@silent	= 'silent';
 	}
 	
@@ -565,10 +596,7 @@ sub _MinusGraphPattern {
 	my $self	= shift;
 	my $l		= shift;
 	my %args	= @_;
-	my $t		= $self->_get_token_type($l, KEYWORD);
-	unless ($t->value eq 'MINUS') {
-		$self->throw_error($t, $l, sprintf("Expecting MINUS but got %s", $t->value));
-	}
+	my $t		= $self->_get_token_type($l, KEYWORD, 'MINUS');
 	
 	my $ggp	= $self->_GroupGraphPattern($l, %args);
 	return SPARQL::AST->new( type => 'Minus', children => [$ggp] );
@@ -584,7 +612,7 @@ sub _GroupOrUnionGraphPattern {
 	my $p		= $self->_GroupGraphPattern($l, %args);
 	my $t		= $self->_peek_token($l);
 	while ($t->type == KEYWORD and $t->value eq 'UNION') {
-		$self->_get_token_type($l, KEYWORD);
+		$self->_get_token_type($l, KEYWORD, 'UNION');
 		my $p2		= $self->_GroupGraphPattern($l, %args);
 		push(@p, $p2);
 		$t		= $self->_peek_token($l);
@@ -605,10 +633,8 @@ sub _Filter {
 	my $l		= shift;
 	my %args	= @_;
 	
-	my $t		= $self->_get_token_type($l, KEYWORD);
-	unless ($t->value eq 'FILTER') {
-		$self->throw_error($t, $l, sprintf("Expecting FILTER but got %s", $t->value));
-	}
+	my $t		= $self->_get_token_type($l, KEYWORD, 'FILTER');
+	
 	my $expr	= $self->_Constraint($l, %args);
 	return SPARQL::AST->new( type => 'Filter', children => [$expr] );
 }
@@ -1305,7 +1331,7 @@ sub throw_error {
 	my $message	= shift;
 	my $line	= $t->start_line;
 	my $col		= $t->start_column;
-	Carp::cluck "$message at $line:$col";
+# 	Carp::cluck "$message at $line:$col";
 	my $text	= "$message at $line:$col";
 	if (defined($t->value)) {
 		$text	.= " (near '" . $t->value . "')";
