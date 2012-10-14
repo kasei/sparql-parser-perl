@@ -30,8 +30,33 @@ sub as_string {
 	my $children	= $self->children || [];
 	my $string		= '';
 	if (defined($value)) {
-		if (ref($value) and not(blessed($value)) and reftype($value) eq 'ARRAY') {
-			$value	= join(' ', @$value);
+		if (ref($value) and not(blessed($value))) {
+			if (reftype($value) eq 'ARRAY') {
+				my @strings;
+				foreach my $v (@$value) {
+					if (blessed($v) and $v->can('as_string')) {
+						my $s	= $v->as_string;
+						$s		=~ s/\r?\n[\t ]*//g;
+						push(@strings, $s);
+					} else {
+						push(@strings, $v);
+					}
+				}
+				$value	= join(' ', @strings);
+			} elsif (reftype($value) eq 'HASH') {
+				my @strings;
+				foreach my $k (keys %$value) {
+					my $v	= $value->{$k};
+					if (blessed($v) and $v->can('as_string')) {
+						my $s	= $v->as_string;
+						$s		=~ s/\r?\n[\t ]*//g;
+						push(@strings, [$k,$s]);
+					} else {
+						push(@strings, [$k,$v]);
+					}
+				}
+				$value	= join(' ', map { $_->[0] . '=(' . $_->[1] . ')' } @strings);
+			}
 		} elsif (blessed($value)) {
 			$value	= $value->as_string;
 		}
