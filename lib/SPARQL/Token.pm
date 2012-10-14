@@ -39,6 +39,7 @@ sub as_node {
 	my $value	= $self->value;
 	
 	given ($self->type) {
+		return RDF::Trine::Node::Literal->new($value, undef, $xsd->boolean) when (BOOLEAN);
 		return RDF::Trine::Node::Literal->new($value, undef, $xsd->double) when (DOUBLE);
 		return RDF::Trine::Node::Literal->new($value, undef, $xsd->decimal) when (DECIMAL);
 		return RDF::Trine::Node::Literal->new($value, undef, $xsd->integer) when (INTEGER);
