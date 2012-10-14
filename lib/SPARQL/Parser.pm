@@ -201,7 +201,7 @@ sub _SelectQuery {
 	
 	if ($select->{project} eq '*') {
 		warn 'SELECT * unhandled...';
-	} elsif (scalar(@{ $select->{project} })) {
+	} elsif (scalar(@{ $select->{project} || [] })) {
 		my @vars	= @{ $select->{project} };
 		$algebra	= SPARQL::AST->new( type => 'Project', children => [$algebra], value => [@vars] );
 	}
@@ -253,7 +253,7 @@ sub _SelectClause {
 	
 	if ($t->type == STAR) {
 		$self->_get_token_type($l, STAR);
-		$project	= '*';
+		$select{project}	= '*';
 	} else {
 		my @project;
 		my %extend;
@@ -651,7 +651,7 @@ sub _Constraint {
 		return $self->_BrackettedExpression($l, %args);
 	} elsif ($t->type == KEYWORD) {
 		# BuiltInCall
-		...
+		return $self->_BuiltInCall($l, %args);
 	} elsif ($t->type == IRI or $t->type == PREFIXNAME) {
 		# FunctionCall
 		...
@@ -1177,8 +1177,19 @@ sub _PrimaryExpression {
 	my $l		= shift;
 	my %args	= @_;
 	
+	my $t		= $self->_peek_token($l);
 	# XXX
-	return $self->_NumericLiteral($l, %args);
+	if ($t->type == LPAREN) {
+		return $self->_BrackettedExpression($l, %args);
+	} elsif ($t->type == VAR) {
+		my $var		= $self->_next_token($l);
+		my $node	= $var->as_node(%args);
+		return SPARQL::AST->new( type => 'Node', value => $node );
+	} elsif ($t->type == KEYWORD) {
+		return $self->_BuiltInCall($l, %args);
+	} else {
+		return $self->_NumericLiteral($l, %args);
+	}
 }
 
 # [120]  	BrackettedExpression	  ::=  	'(' Expression ')'
@@ -1248,6 +1259,49 @@ sub _BrackettedExpression {
 # |	RegexExpression 
 # |	ExistsFunc 
 # |	NotExistsFunc
+sub _BuiltInCall {
+	my $self	= shift;
+	my $l		= shift;
+	my %args	= @_;
+	
+	my $func	= $self->_get_token_type($l, KEYWORD);
+	my $name	= $func->value;
+	if ($name =~ m/^(?:STR|LANG|DATATYPE|IRI|URI|ABS|CEIL|FLOOR|ROUND|STRLEN|UCASE|LCASE|ENCODE_FOR_URI|YEAR|MONTH|DAY|HOURS|MINUTES|SECONDS|TIMEZONE|TZ|MD5|SHA1|SHA256|SHA384|SHA512|ISIRI|ISURI|ISBLANK|ISLITERAL|ISNUMERIC)$/) {
+		$self->_get_token_type($l, LPAREN);
+		my $e	= $self->_Expression($l, %args);
+		$self->_get_token_type($l, RPAREN);
+		my $uri	= 'sparql:' . lc($name);
+		return SPARQL::AST->new( type => 'Function', value => $uri, children => [$e] );
+	} elsif ($name =~ /^(?:LANGMATCHES|CONTAINS|STRSTARTS|STRENDS|STRBEFORE|STRAFTER|STRLANG|STRDT|SAMETERM)$/) {
+		$self->_get_token_type($l, LPAREN);
+		my $e1	= $self->_Expression($l, %args);
+		$self->_get_token_type($l, COMMA);
+		my $e2	= $self->_Expression($l, %args);
+		$self->_get_token_type($l, RPAREN);
+		my $uri	= 'sparql:' . lc($name);
+		return SPARQL::AST->new( type => 'Function', value => $uri, children => [$e1, $e2] );
+	} elsif ($name eq 'BOUND') {
+	} elsif ($name eq 'BNODE') {
+	} elsif ($name eq 'RAND') {
+	} elsif ($name eq 'CONCAT') {
+	} elsif ($name eq 'SUBSTR') {
+	} elsif ($name eq 'REPLACE') {
+	} elsif ($name =~ /^(?:NOW|UUID|STRUUID)$/) {
+	} elsif ($name eq 'IF') {
+	} elsif ($name eq 'REGEX') {
+	} elsif ($name eq 'EXISTS') {
+		my $ggp	= $self->_GroupGraphPattern($l, %args);
+		return SPARQL::AST->new( type => 'Exists', children => [$ggp] );
+	} elsif ($name eq 'NOT') {
+		$self->_get_token_type($l, KEYWORD, 'EXISTS');
+		my $ggp	= $self->_GroupGraphPattern($l, %args);
+		return SPARQL::AST->new( type => 'NotExists', children => [$ggp] );
+	}
+	warn "unimplemented built-in call $name";
+	...
+}
+
+
 # [122]  	RegexExpression	  ::=  	'REGEX' '(' Expression ',' Expression ( ',' Expression )? ')'
 # [123]  	SubstringExpression	  ::=  	'SUBSTR' '(' Expression ',' Expression ( ',' Expression )? ')'
 # [124]  	StrReplaceExpression	  ::=  	'REPLACE' '(' Expression ',' Expression ',' Expression ( ',' Expression )? ')'
