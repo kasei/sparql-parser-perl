@@ -192,38 +192,82 @@ sub _SelectQuery {
 	
 	my $select	= $self->_SelectClause($l, %args);
 	# XXX DatasetClause
-	my $algebra	= $self->_WhereClause($l, %args);
+	my $ast	= $self->_WhereClause($l, %args);
 	my %mods	= $self->_SolutionModifier($l, %args);
 
 	if (my $e = $select->{extend}) {
-		$algebra	= SPARQL::AST->new( type => 'Extend', children => [$algebra], value => $e );
+		$ast	= SPARQL::AST->new( type => 'Extend', children => [$ast], value => $e );
+	}
+	
+	# ValuesClause pushed down from the Query production
+	my $t	= $self->_peek_token($l);
+	my $values	= $self->_ValuesClause($l, %args);
+	if ($values) {
+		$ast	= SPARQL::AST->new( type => 'Group', children => [$ast, $values] );
 	}
 	
 	if ($select->{project} eq '*') {
 		warn 'SELECT * unhandled...';
 	} elsif (scalar(@{ $select->{project} || [] })) {
 		my @vars	= @{ $select->{project} };
-		$algebra	= SPARQL::AST->new( type => 'Project', children => [$algebra], value => [@vars] );
+		$ast	= SPARQL::AST->new( type => 'Project', children => [$ast], value => [@vars] );
 	}
 	
 	if ($select->{options}{distinct}) {
-		$algebra	= SPARQL::AST->new( type => 'Distinct', children => [$algebra] );
+		$ast	= SPARQL::AST->new( type => 'Distinct', children => [$ast] );
 	} elsif ($select->{options}{reduced}) {
-		$algebra	= SPARQL::AST->new( type => 'Reduced', children => [$algebra] );
+		$ast	= SPARQL::AST->new( type => 'Reduced', children => [$ast] );
 	}
 	
 	if (exists $mods{offset}) {
-		$algebra	= SPARQL::AST->new( type => 'Offset', children => [$algebra], value => $mods{offset} );
+		$ast	= SPARQL::AST->new( type => 'Offset', children => [$ast], value => $mods{offset} );
 	}
 	if (exists $mods{limit}) {
-		$algebra	= SPARQL::AST->new( type => 'Limit', children => [$algebra], value => $mods{limit} );
+		$ast	= SPARQL::AST->new( type => 'Limit', children => [$ast], value => $mods{limit} );
 	}
 	
-	return $algebra;
+	return $ast;
 }
 
 
 # [8]  	SubSelect	  ::=  	SelectClause WhereClause SolutionModifier ValuesClause
+sub _SubSelect {
+	my $self	= shift;
+	my $l		= shift;
+	my %args	= @_;
+	
+	my $select	= $self->_SelectClause($l, %args);
+	my $ast		= $self->_WhereClause($l, %args);
+	my %mods	= $self->_SolutionModifier($l, %args);
+	# XXX VALUES
+	
+	if (my $e = $select->{extend}) {
+		$ast	= SPARQL::AST->new( type => 'Extend', children => [$ast], value => $e );
+	}
+	
+	if ($select->{project} eq '*') {
+		warn 'SELECT * unhandled...';
+	} elsif (scalar(@{ $select->{project} || [] })) {
+		my @vars	= @{ $select->{project} };
+		$ast	= SPARQL::AST->new( type => 'Project', children => [$ast], value => [@vars] );
+	}
+	
+	if ($select->{options}{distinct}) {
+		$ast	= SPARQL::AST->new( type => 'Distinct', children => [$ast] );
+	} elsif ($select->{options}{reduced}) {
+		$ast	= SPARQL::AST->new( type => 'Reduced', children => [$ast] );
+	}
+	
+	if (exists $mods{offset}) {
+		$ast	= SPARQL::AST->new( type => 'Offset', children => [$ast], value => $mods{offset} );
+	}
+	if (exists $mods{limit}) {
+		$ast	= SPARQL::AST->new( type => 'Limit', children => [$ast], value => $mods{limit} );
+	}
+	
+	return $ast;
+}
+
 # [9]  	SelectClause	  ::=  	'SELECT' ( 'DISTINCT' | 'REDUCED' )? ( ( Var | ( '(' Expression 'AS' Var ')' ) )+ | '*' )
 sub _SelectClause {
 	my $self	= shift;
@@ -282,7 +326,10 @@ sub _SelectClause {
 }
 
 # [10]  	ConstructQuery	  ::=  	'CONSTRUCT' ( ConstructTemplate DatasetClause* WhereClause SolutionModifier | DatasetClause* 'WHERE' '{' TriplesTemplate? '}' SolutionModifier )
+# ValuesClause pushed down from the Query production
+
 # [11]  	DescribeQuery	  ::=  	'DESCRIBE' ( VarOrIri+ | '*' ) DatasetClause* WhereClause? SolutionModifier
+# ValuesClause pushed down from the Query production
 
 # [12]  	AskQuery	  ::=  	'ASK' DatasetClause* WhereClause SolutionModifier
 sub _AskQuery {
@@ -291,9 +338,15 @@ sub _AskQuery {
 	my %args	= @_;
 	
 	# XXX DatasetClause
-	my $algebra	= $self->_WhereClause($l, %args);
+	my $ast	= $self->_WhereClause($l, %args);
 	my %mods	= $self->_SolutionModifier($l, %args);
-	return SPARQL::AST->new( type => 'Ask', children => [$algebra] );
+	# ValuesClause pushed down from the Query production
+	my $values	= $self->_ValuesClause($l, %args);
+	if ($values) {
+		$ast	= SPARQL::AST->new( type => 'Group', children => [$ast, $values] );
+	}
+	
+	return SPARQL::AST->new( type => 'Ask', children => [$ast] );
 }
 
 
@@ -387,6 +440,20 @@ sub _LimitOffsetClauses {
 # [26]  	LimitClause	  ::=  	'LIMIT' INTEGER
 # [27]  	OffsetClause	  ::=  	'OFFSET' INTEGER
 # [28]  	ValuesClause	  ::=  	( 'VALUES' DataBlock )?
+sub _ValuesClause {
+	my $self	= shift;
+	my $l		= shift;
+	my %args	= @_;
+	
+	my $t		= $self->_peek_token($l);
+	if ($t and $t->type == KEYWORD and $t->value eq 'VALUES') {
+		$self->_get_token_type($l, KEYWORD, 'VALUES');
+		return $self->_DataBlock($l, %args);
+	} else {
+		return;
+	}
+}
+
 # [29]  	Update	  ::=  	Prologue ( Update1 ( ';' Update )? )?
 # [30]  	Update1	  ::=  	Load | Clear | Drop | Add | Move | Copy | Create | InsertData | DeleteData | DeleteWhere | Modify
 # [31]  	Load	  ::=  	'LOAD' 'SILENT'? iri ( 'INTO' GraphRef )?
@@ -585,11 +652,114 @@ sub _ServiceGraphPattern {
 }
 
 # [60]  	Bind	  ::=  	'BIND' '(' Expression 'AS' Var ')'
+sub _Bind {
+	my $self	= shift;
+	my $l		= shift;
+	my %args	= @_;
+
+	$self->_get_token_type($l, KEYWORD, 'BIND');
+	$self->_get_token_type($l, LPAREN);
+	my $e	= $self->_Expression($l, %args);
+	$self->_get_token_type($l, KEYWORD, 'AS');
+	my $var	= $self->_get_token_type($l, VAR);
+	$self->_get_token_type($l, RPAREN);
+	return SPARQL::AST->new( type => 'Bind', children => [$e], value => $var->value );
+}
+
 # [61]  	InlineData	  ::=  	'VALUES' DataBlock
 # [62]  	DataBlock	  ::=  	InlineDataOneVar | InlineDataFull
+sub _DataBlock {
+	my $self	= shift;
+	my $l		= shift;
+	my %args	= @_;
+	
+	my $t		= $self->_peek_token($l);
+	if ($t->type == VAR) {
+		return $self->_InlineDataOneVar($l, %args);
+	} else {
+		return $self->_InlineDataFull($l, %args);
+	}
+}
+
 # [63]  	InlineDataOneVar	  ::=  	Var '{' DataBlockValue* '}'
 # [64]  	InlineDataFull	  ::=  	( NIL | '(' Var* ')' ) '{' ( '(' DataBlockValue* ')' | NIL )* '}'
+sub _InlineDataFull {
+	my $self	= shift;
+	my $l		= shift;
+	my %args	= @_;
+	
+	my $t		= $self->_peek_token($l);
+	my @vars;
+	if ($t->type == NIL) {
+		$self->_get_token_type($l, NIL);
+	} else {
+		$self->_get_token_type($l, LPAREN);
+		$t		= $self->_peek_token($l);
+		while (1) {
+			if ($t->type == VAR) {
+				$t	= $self->_get_token_type($l, VAR);
+				push(@vars, $t->value);
+			} else {
+				last;
+			}
+			$t		= $self->_peek_token($l);
+		}
+		$self->_get_token_type($l, RPAREN);
+	}
+	
+	my @rows;
+	$self->_get_token_type($l, LBRACE);
+	$t		= $self->_peek_token($l);
+	while ($t->type == LPAREN or $t->type == NIL) {
+		my @values;
+		if ($t->type == NIL) {
+			$self->_get_token_type($l, NIL);
+		} else {
+			$self->_get_token_type($l, LPAREN);
+			$t		= $self->_peek_token($l);
+			while ($t->type != RPAREN) {
+				push(@values, $self->_DataBlockValue($l, %args));
+				$t		= $self->_peek_token($l);
+			}
+			$self->_get_token_type($l, RPAREN);
+		}
+		push(@rows, SPARQL::AST->new( type => 'List', children => \@values ));
+		$t		= $self->_peek_token($l);
+	}
+	$self->_get_token_type($l, RBRACE);
+	
+	return SPARQL::AST->new( type => 'Values', value => \@vars, children => \@rows );
+}
+
 # [65]  	DataBlockValue	  ::=  	iri |	RDFLiteral |	NumericLiteral |	BooleanLiteral |	'UNDEF'
+sub _DataBlockValue {
+	my $self	= shift;
+	my $l		= shift;
+	my %args	= @_;
+	
+	my $t		= $self->_peek_token($l);
+	if ($t->type == KEYWORD and $t->value eq 'UNDEF') {
+		return SPARQL::AST->new( type => 'Undef' );
+	} elsif ($t->type == BOOLEAN) {
+		# Var
+		# BooleanLiteral
+		my $var		= $self->_next_token($l);
+		my $node	= $var->as_node(%args);
+		return SPARQL::AST->new( type => 'Node', value => $node );
+	} elsif ($t->type == STRING1D or $t->type == STRING1S or $t->type == STRING3D or $t->type == STRING3S) {
+		# RDFLiteral
+		my $var		= $self->_next_token($l);
+		my $node	= $var->as_node(%args);
+		return SPARQL::AST->new( type => 'Node', value => $node );
+	} elsif ($t->type == IRI or $t->type == PREFIXNAME) {
+		my $t		= $self->_next_token($l);
+		my $node	= $t->as_node(%args);
+		return SPARQL::AST->new( type => 'Node', value => $node );
+	} else {
+		# NumericLiteral
+		return $self->_NumericLiteral($l, %args);
+	}
+}
 
 # [66]  	MinusGraphPattern	  ::=  	'MINUS' GroupGraphPattern
 sub _MinusGraphPattern {
@@ -660,7 +830,53 @@ sub _Constraint {
 
 # [70]  	FunctionCall	  ::=  	iri ArgList
 # [71]  	ArgList	  ::=  	NIL | '(' 'DISTINCT'? Expression ( ',' Expression )* ')'
+sub _ArgList {
+	my $self	= shift;
+	my $l		= shift;
+	my %args	= @_;
+	
+	my $t		= $self->_peek_token($l);
+	if ($t->type == NIL) {
+		$self->_get_token_type($l, NIL);
+		return;
+	} else {
+		$self->_get_token_type($l, LPAREN);
+		my @e	= $self->_Expression($l, %args);
+		my $t	= $self->_peek_token($l);
+		while ($t->type == COMMA) {
+			$self->_get_token_type($l, COMMA);
+			push(@e, $self->_Expression($l, %args));
+			$t	= $self->_peek_token($l);
+		}
+		$self->_get_token_type($l, RPAREN);
+		return @e;
+	}
+}
+
 # [72]  	ExpressionList	  ::=  	NIL | '(' Expression ( ',' Expression )* ')'
+sub _ExpressionList {
+	my $self	= shift;
+	my $l		= shift;
+	my %args	= @_;
+	
+	my $t	= $self->_peek_token($l);
+	if ($t->type == NIL) {
+		$self->_get_token_type($l, NIL);
+		return;
+	} else {
+		$self->_get_token_type($l, LPAREN);
+		my @e	= $self->_Expression($l, %args);
+		my $t	= $self->_peek_token($l);
+		while ($t->type == COMMA) {
+			$self->_get_token_type($l, COMMA);
+			push(@e, $self->_Expression($l, %args));
+			$t	= $self->_peek_token($l);
+		}
+		$self->_get_token_type($l, RPAREN);
+		return @e;
+	}
+}
+
 # [73]  	ConstructTemplate	  ::=  	'{' ConstructTriples? '}'
 # [74]  	ConstructTriples	  ::=  	TriplesSameSubject ( '.' ConstructTriples? )?
 # [75]  	TriplesSameSubject	  ::=  	VarOrTerm PropertyListNotEmpty |	TriplesNode PropertyList
@@ -1016,6 +1232,7 @@ sub _Expression {
 	my $self	= shift;
 	my $l		= shift;
 	my %args	= @_;
+	
 	return $self->_ConditionalOrExpression($l, %args);
 }
 
@@ -1110,7 +1327,16 @@ sub _RelationalExpression {
 		my $e2	= $self->_NumericExpression($l, %args);
 		$expr	= SPARQL::AST->new( type => 'RelationalExpression', children => [$expr, $e2], value => '>=' );
 	} elsif ($t->type == KEYWORD and $t->value eq 'IN') {
-		...
+		$self->_get_token_type($l, KEYWORD, 'IN');
+		my @list	= $self->_ExpressionList($l, %args);
+		my $list	= SPARQL::AST->new( type => 'List', children => \@list );
+		$expr	= SPARQL::AST->new( type => 'RelationalExpression', children => [$expr, $list], value => 'IN' );
+	} elsif ($t->type == KEYWORD and $t->value eq 'NOT') {
+		$self->_get_token_type($l, KEYWORD, 'NOT');
+		$self->_get_token_type($l, KEYWORD, 'IN');
+		my @list	= $self->_ExpressionList($l, %args);
+		my $list	= SPARQL::AST->new( type => 'List', children => \@list );
+		$expr	= SPARQL::AST->new( type => 'RelationalExpression', children => [$expr, $list], value => 'NOT IN' );
 	}
 	return $expr;
 }
@@ -1149,7 +1375,19 @@ sub _MultiplicativeExpression {
 	my $l		= shift;
 	my %args	= @_;
 	my $expr	= $self->_UnaryExpression($l, %args);
-	# XXX
+	my $t		= $self->_peek_token($l);
+		while ($t->type == STAR or $t->type == SLASH) {
+		if ($t->type == STAR) {
+			$self->_get_token_type($l, STAR);
+			my $e2	= $self->_UnaryExpression($l, %args);
+			$expr	= SPARQL::AST->new( type => 'MultiplicativeExpression', children => [$expr, $e2], value => '*' );
+		} elsif ($t->type == SLASH) {
+			$self->_get_token_type($l, SLASH);
+			my $e2	= $self->_UnaryExpression($l, %args);
+			$expr	= SPARQL::AST->new( type => 'MultiplicativeExpression', children => [$expr, $e2], value => '/' );
+		}
+		$t		= $self->_peek_token($l);
+	}
 	return $expr;
 }
 
@@ -1161,11 +1399,17 @@ sub _UnaryExpression {
 	
 	my $t		= $self->_peek_token($l);
 	if ($t->type == BANG) {
-		...
+		$self->_get_token_type($l, BANG);
+		my $e	= $self->_PrimaryExpression($l, %args);
+		return SPARQL::AST->new( type => 'Not', children => [$e] );
 	} elsif ($t->type == PLUS) {
-		...
+		$self->_get_token_type($l, PLUS);
+		my $e	= $self->_PrimaryExpression($l, %args);
+		return SPARQL::AST->new( type => 'Plus', children => [$e] );
 	} elsif ($t->type == MINUS) {
-		...
+		$self->_get_token_type($l, MINUS);
+		my $e	= $self->_PrimaryExpression($l, %args);
+		return SPARQL::AST->new( type => 'Minus', children => [$e] );
 	} else {
 		return $self->_PrimaryExpression($l, %args);
 	}
@@ -1180,14 +1424,27 @@ sub _PrimaryExpression {
 	my $t		= $self->_peek_token($l);
 	# XXX
 	if ($t->type == LPAREN) {
+		# BrackettedExpression
 		return $self->_BrackettedExpression($l, %args);
-	} elsif ($t->type == VAR) {
+	} elsif ($t->type == VAR or $t->type == BOOLEAN) {
+		# Var
+		# BooleanLiteral
 		my $var		= $self->_next_token($l);
 		my $node	= $var->as_node(%args);
 		return SPARQL::AST->new( type => 'Node', value => $node );
 	} elsif ($t->type == KEYWORD) {
+		# BuiltInCall
 		return $self->_BuiltInCall($l, %args);
+	} elsif ($t->type == STRING1D or $t->type == STRING1S or $t->type == STRING3D or $t->type == STRING3S) {
+		# RDFLiteral
+		my $var		= $self->_next_token($l);
+		my $node	= $var->as_node(%args);
+		return SPARQL::AST->new( type => 'Node', value => $node );
+	} elsif ($t->type == IRI or $t->type == PREFIXNAME) {
+		# iriOrFunction
+		return $self->_iriOrFunction($l, %args);
 	} else {
+		# NumericLiteral
 		return $self->_NumericLiteral($l, %args);
 	}
 }
@@ -1296,6 +1553,9 @@ sub _BuiltInCall {
 		$self->_get_token_type($l, KEYWORD, 'EXISTS');
 		my $ggp	= $self->_GroupGraphPattern($l, %args);
 		return SPARQL::AST->new( type => 'NotExists', children => [$ggp] );
+	} else {
+		$self->_unget_token($func);
+		return $self->_Aggregate($l, %args);
 	}
 	warn "unimplemented built-in call $name";
 	...
@@ -1314,7 +1574,92 @@ sub _BuiltInCall {
 # | 'AVG' '(' 'DISTINCT'? Expression ')' 
 # | 'SAMPLE' '(' 'DISTINCT'? Expression ')' 
 # | 'GROUP_CONCAT' '(' 'DISTINCT'? Expression ( ';' 'SEPARATOR' '=' String )? ')'
+sub _Aggregate {
+	my $self	= shift;
+	my $l		= shift;
+	my %args	= @_;
+	
+	my $func		= $self->_get_token_type($l, KEYWORD);
+	my $name		= $func->value;
+	my $distinct	= 0;
+	if ($name eq 'COUNT') {
+		$self->_get_token_type($l, LPAREN);
+		my $t	= $self->_peek_token($l);
+		if ($t->type == KEYWORD and $t->value eq 'DISTINCT') {
+			$self->_get_token_type($l, KEYWORD, 'DISTINCT');
+			$distinct	= 1;
+		}
+		
+		$t	= $self->_peek_token($l);
+		if ($t->type == STAR) {
+			$self->_get_token_type($l, STAR);
+			$self->_get_token_type($l, RPAREN);
+			my $uri	= 'sparql:count-star';
+			return SPARQL::AST->new( type => 'Aggregate', value => [$uri, $distinct] );
+		} else {
+			my $e	= $self->_Expression($l, %args);
+			$self->_get_token_type($l, RPAREN);
+			my $uri	= 'sparql:' . lc($name);
+			return SPARQL::AST->new( type => 'Aggregate', value => [$uri, $distinct], children => [$e] );
+		}
+	} elsif ($name =~ /^(?:SUM|MIN|MAX|AVG|SAMPLE)$/) {
+		$self->_get_token_type($l, LPAREN);
+		my $t	= $self->_peek_token($l);
+		if ($t->type == KEYWORD and $t->value eq 'DISTINCT') {
+			$self->_get_token_type($l, KEYWORD, 'DISTINCT');
+			$distinct	= 1;
+		}
+		
+		my $e	= $self->_Expression($l, %args);
+		$self->_get_token_type($l, RPAREN);
+		my $uri	= 'sparql:' . lc($name);
+		return SPARQL::AST->new( type => 'Aggregate', value => [$uri, $distinct], children => [$e] );
+	} elsif ($name eq 'GROUP_CONCAT') {
+		$self->_get_token_type($l, LPAREN);
+		my $t	= $self->_peek_token($l);
+		if ($t->type == KEYWORD and $t->value eq 'DISTINCT') {
+			$self->_get_token_type($l, KEYWORD, 'DISTINCT');
+			$distinct	= 1;
+		}
+		
+		my $e	= $self->_Expression($l, %args);
+		my @sep;
+		$t	= $self->_peek_token($l);
+		if ($t->type == SEMICOLON) {
+			$self->_get_token_type($l, SEMICOLON);
+			$self->_get_token_type($l, KEYWORD, 'SEPARATOR');
+			$self->_get_token_type($l, EQUALS);
+			@sep	= $self->_String($l, %args);
+		}
+		$self->_get_token_type($l, RPAREN);
+		my $uri	= 'sparql:' . lc($name);
+		return SPARQL::AST->new( type => 'Aggregate', value => [$uri, $distinct, @sep], children => [$e] );
+	}
+	warn "unimplemented aggregate $name";
+}
+
+
 # [128]  	iriOrFunction	  ::=  	iri ArgList?
+sub _iriOrFunction {
+	my $self	= shift;
+	my $l		= shift;
+	my %args	= @_;
+	
+	my $t		= $self->_next_token($l);
+	unless ($t->type == IRI or $t->type == PREFIXNAME) {
+		$self->throw_error($t, $l, sprintf("Expecting IRI but got %s", decrypt_constant($t->type)));
+	}
+	my $node	= $t->as_node(%args);
+	$t			= $self->_peek_token($l);
+	if ($t->type == NIL or $t->type == LPAREN) {
+		my @args	= $self->_ArgList($l, %args);
+		return SPARQL::AST->new( type => 'Function', value => $node, children => [@args] );
+	} else {
+		return SPARQL::AST->new( type => 'Node', value => $node );
+	}
+	
+}
+
 # [129]  	RDFLiteral	  ::=  	String ( LANGTAG | ( '^^' iri ) )?
 
 # [130]  	NumericLiteral	  ::=  	NumericLiteralUnsigned | NumericLiteralPositive | NumericLiteralNegative
@@ -1333,6 +1678,17 @@ sub _NumericLiteral {
 
 # [134]  	BooleanLiteral	  ::=  	'true' |	'false'
 # [135]  	String	  ::=  	STRING_LITERAL1 | STRING_LITERAL2 | STRING_LITERAL_LONG1 | STRING_LITERAL_LONG2
+sub _String {
+	my $self	= shift;
+	my $l		= shift;
+	my %args	= @_;
+	
+	my $t		= $self->_next_token($l);
+	# XXX throw if the token isn't a string
+	my $node	= $t->as_node(%args);
+	return SPARQL::AST->new( type => 'Node', value => $node );
+}
+
 # [136]  	iri	  ::=  	IRIREF |	PrefixedName
 # [137]  	PrefixedName	  ::=  	PNAME_LN | PNAME_NS
 # [138]  	BlankNode	  ::=  	BLANK_NODE_LABEL |	ANON
