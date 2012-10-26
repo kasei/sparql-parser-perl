@@ -69,6 +69,12 @@ has start_line => (
 	default => -1,
 );
 
+has comments => (
+	is => 'rw',
+	isa => 'Int',
+	default => 0,
+);
+
 # has 'verbose' => (
 # 	is => 'rw',
 # 	isa => 'Int',
@@ -187,8 +193,12 @@ sub get_token {
 # COMMENT
 		elsif ($c eq '#') {
 			# we're ignoring comment tokens, but we could return them here instead of falling through to the 'next':
-			$self->get_comment();
-			next;
+			my $t	= $self->get_comment();
+			if ($self->comments) {
+				return $t;
+			} else {
+				next;
+			}
 		}
 # NIL
 		elsif ($c eq '(' and $self->{buffer} =~ /^[(][ \r\n\t]*[)]/) {
