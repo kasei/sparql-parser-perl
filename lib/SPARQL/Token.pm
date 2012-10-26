@@ -31,6 +31,24 @@ sub is_term {
 	return ($type == IRI or $type == PREFIXNAME);
 }
 
+sub is_number {
+	my $self	= shift;
+	my $type	= $self->type;
+	return ($type == INTEGER or $type == DECIMAL or $type == DOUBLE);
+}
+
+sub is_string {
+	my $self	= shift;
+	my $type	= $self->type;
+	return ($type == STRING1D or $type == STRING1S or $type == STRING3D or $type == STRING3S);
+}
+
+sub is_relop {
+	my $self	= shift;
+	my $type	= $self->type;
+	return ($type == LT or $type == LE or $type == GT or $type == GE or $type == EQUALS or $type == NOTEQUALS or $type == ANDAND or $type == OROR);
+}
+
 sub as_node {
 	my $self	= shift;
 	my %args	= @_;
