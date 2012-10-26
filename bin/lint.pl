@@ -34,7 +34,9 @@ sub pretty_print {
 			$state->{bracelevel}--;
 		}
 		unless ($state->{'newline'} or $state->{'space'}) {
-			if ($t->type == KEYWORD and ($t->value eq 'PREFIX' or $t->value eq 'BASE' or $t->value eq 'SELECT' or $t->value eq 'ASK' or $t->value eq 'DESCRIBE' or $t->value eq 'CONSTRUCT')) {
+			if ($t->type == LBRACE) {
+				print " ";
+			} elsif ($t->type == KEYWORD and ($t->value eq 'PREFIX' or $t->value eq 'BASE' or $t->value eq 'SELECT' or $t->value eq 'ASK' or $t->value eq 'DESCRIBE' or $t->value eq 'CONSTRUCT')) {
 				print "\n";
 				$state->{'newline'}	= 1;
 			} elsif ($t->type == RBRACE and blessed($state->{'last'}) and $state->{'last'}->type != LBRACE) {
@@ -51,13 +53,15 @@ sub pretty_print {
 				$state->{'newline'}	= 1;
 			} elsif ($t->type == KEYWORD and blessed($state->{'last'}) and $state->{'last'}->type == LPAREN) {
 				# no-op
-			} elsif ($t->type == KEYWORD or $t->type == PREFIXNAME or $t->type == DOT) {
+			} elsif ($t->type == PREFIXNAME and blessed($state->{'last'}) and $state->{'last'}->type != HATHAT) {
+				print " ";
+			} elsif ($t->type == KEYWORD or $t->type == DOT) {
 				print " ";
 			} elsif ($t->type == SEMICOLON) {
 				print " ";
 			} elsif ($t->type == COMMENT) {
 				print " ";
-			} elsif ($t->type == VAR or $t->is_term or $t->is_number or $t->is_string) {
+			} elsif ($t->type == VAR or $t->type == IRI or $t->is_number or $t->is_string) {
 				if (not($state->{parenlevel})) {
 					print " ";
 				}
@@ -160,9 +164,14 @@ sub pretty_print {
 			print '>=' when (GE);
 			print '=' when (EQUALS);
 			print '!=' when (NOTEQUALS);
+			print '^^' when (HATHAT);
 			print $t->value when (INTEGER);
 			print $t->value when (DECIMAL);
 			print $t->value when (DOUBLE);
+			when (LANG) {
+				my $lang	= $t->value;
+				print "@" . $lang;
+			}
 			when (COMMENT) {
 				my $comment	= $t->value;
 				$comment	=~ s/^\s+//;
